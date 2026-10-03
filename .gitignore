@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.python_packages
+
+# Azure Functions local settings
+local.settings.json
