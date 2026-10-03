@@ -109,9 +109,19 @@ GET /employees/1
     "DepartmentID": 1,
     "Salary": 75000.0,
     "Bonus": 5000.0,
+    "EffectiveBonus": 5000.0,
     "HireDate": "2022-01-15"
 }
 ```
+
+**Effective Bonus**
+
+`EffectiveBonus` is calculated at read time.
+
+- If `Bonus` exists, `EffectiveBonus` equals the actual bonus.
+- If `Bonus` is `NULL`, `EffectiveBonus` is calculated as 5% of salary.
+
+The stored `Bonus` value is not modified.
 
 ---
 
@@ -131,7 +141,15 @@ GET /employees
 
 `200 OK`
 
-Returns a JSON array containing employee records.
+Returns a JSON array containing employee records. Each employee includes:
+
+- Employee details
+- Salary
+- Stored bonus
+- Effective bonus
+- Hire date
+
+For employees with no stored bonus, `EffectiveBonus` is calculated as 5% of salary.
 
 ---
 
@@ -274,7 +292,7 @@ GET /reports/total-bonus
 
 `GET /reports/no-bonus`
 
-Returns employees whose bonus is `NULL`.
+Returns employees whose stored bonus is `NULL`.
 
 **Example**
 
@@ -286,7 +304,7 @@ GET /reports/no-bonus
 
 `200 OK`
 
-Returns a JSON array containing employees who have no bonus.
+Returns a JSON array containing employees who have no stored bonus.
 
 ---
 
@@ -294,9 +312,9 @@ Returns a JSON array containing employees who have no bonus.
 
 `GET /reports/bonus-percentage`
 
-Calculates the bonus received by each employee as a percentage of their base salary, rounded to two decimal places.
+Calculates the bonus as a percentage of base salary, rounded to two decimal places.
 
-Employees without a bonus are shown with a bonus value of `0` and a bonus percentage of `0`.
+Employees without a bonus are represented with a bonus value of `0` and a bonus percentage of `0`.
 
 **Formula**
 
@@ -360,7 +378,12 @@ If no department satisfies the condition, the API returns an empty array.
 
 `GET /reports/bonus-ranking`
 
-Ranks employees according to their bonus amount. Employees with higher bonuses receive higher rankings, and employees with `NULL` bonuses are placed at the end.
+Ranks employees according to their bonus amount.
+
+- Higher bonuses receive higher rankings.
+- Employees with `NULL` bonuses are placed last.
+- Ranking is calculated dynamically using SQL's `RANK()` window function.
+- The rank is not stored as a column in the `Employee` table.
 
 **Example**
 
@@ -376,17 +399,15 @@ GET /reports/bonus-ranking
 [
     {
         "Rank": 1,
-        "EmployeeID": 10,
-        "FirstName": "Neha",
-        "LastName": "Patil",
+        "EmployeeID": "<id>",
+        "FirstName": "<first name>",
+        "LastName": "<last name>",
         "DepartmentID": 1,
         "Salary": 50000.0,
         "Bonus": 90000.0
     }
 ]
 ```
-
-The ranking is calculated dynamically using SQL's `RANK()` window function and is not stored as a column in the `Employee` table.
 
 ---
 
@@ -406,7 +427,7 @@ Identifies:
 Total Compensation = Salary + Bonus
 ```
 
-A `NULL` bonus is treated as `0`.
+A `NULL` bonus is treated as `0` for this report.
 
 **Example**
 
@@ -421,18 +442,18 @@ GET /reports/highest-salary
 ```json
 {
     "HighestBaseSalaryEmployee": {
-        "EmployeeID": 4,
-        "FirstName": "Sneha",
-        "LastName": "Desai",
+        "EmployeeID": "<id>",
+        "FirstName": "<first name>",
+        "LastName": "<last name>",
         "DepartmentID": 3,
         "Salary": 95000.0,
         "Bonus": 10000.0,
         "TotalCompensation": 105000.0
     },
     "HighestTotalCompensationEmployee": {
-        "EmployeeID": 10,
-        "FirstName": "Neha",
-        "LastName": "Patil",
+        "EmployeeID": "<id>",
+        "FirstName": "<first name>",
+        "LastName": "<last name>",
         "DepartmentID": 1,
         "Salary": 50000.0,
         "Bonus": 90000.0,
@@ -441,6 +462,8 @@ GET /reports/highest-salary
     "SameEmployee": false
 }
 ```
+
+The values above are illustrative; the API calculates the results dynamically from the current database data.
 
 ---
 
@@ -454,3 +477,150 @@ GET /reports/highest-salary
 - [x] Highest base salary employee
 - [x] Highest total compensation employee
 - [x] Comparison of highest salary and highest total compensation employee
+
+---
+
+## Part C — Production-Minded Considerations
+
+### 1. Secure Configuration
+
+The database connection string is not hardcoded in the application code.
+
+- Local development uses `local.settings.json`.
+- `local.settings.json` is excluded from Git using `.gitignore`.
+- The application reads the connection string from the `SQL_CONNECTION_STRING` environment variable.
+- In Azure, `SQL_CONNECTION_STRING` can be configured as a Function App Application Setting.
+- Database credentials are therefore kept outside the source code.
+
+### 2. Error Handling
+
+The API returns appropriate HTTP status codes and user-friendly error messages.
+
+| Status Code | Meaning                       |
+| ----------- | ----------------------------- |
+| `200`       | Successful request            |
+| `201`       | Employee successfully created |
+| `400`       | Invalid request or input      |
+| `404`       | Employee not found            |
+| `500`       | Unexpected or database error  |
+
+Raw database errors and sensitive connection information are not returned to the client.
+
+### 3. Default Bonus Handling
+
+A **read-time default bonus of 5% of salary** is used when an employee's stored `Bonus` is `NULL`.
+
+The database value is not modified. The original `Bonus` remains `NULL`, while the API calculates an `EffectiveBonus` using:
+
+```sql
+COALESCE(Bonus, Salary * 0.05)
+```
+
+This approach preserves the distinction between an employee who has never received an actual bonus and the calculated default bonus.
+
+**Example — no stored bonus**
+
+```text
+Salary         = 60000
+Bonus          = NULL
+EffectiveBonus = 3000
+```
+
+**Example — actual bonus**
+
+```text
+Salary         = 60000
+Bonus          = 5000
+EffectiveBonus = 5000
+```
+
+---
+
+## Database Setup
+
+The project uses Azure SQL Database.
+
+SQL scripts are provided in the `sql` directory:
+
+```text
+sql/
+├── create_tables.sql
+└── seed_data.sql
+```
+
+- `create_tables.sql` creates the `Department` and `Employee` tables and establishes the foreign-key relationship.
+- `seed_data.sql` inserts sample departments and employees.
+
+---
+
+## Running the Project Locally
+
+### Prerequisites
+
+- Python
+- Azure Functions Core Tools
+- Azure SQL Database
+- ODBC Driver for SQL Server
+- VS Code
+- Postman (optional)
+
+### Install Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### Configure Local Settings
+
+Create `local.settings.json` with the required application settings.
+
+The database connection string should be stored in:
+
+```text
+SQL_CONNECTION_STRING
+```
+
+Do not commit `local.settings.json` to Git.
+
+### Start Azure Functions
+
+From the project directory:
+
+```bash
+func host start
+```
+
+The API will be available at:
+
+```text
+http://localhost:7071/api
+```
+
+---
+
+## Project Structure
+
+```text
+employee-compensation-service/
+│
+├── function_app.py
+├── host.json
+├── requirements.txt
+├── README.md
+├── .gitignore
+│
+└── sql/
+    ├── create_tables.sql
+    └── seed_data.sql
+```
+
+---
+
+## API Design Notes
+
+- All database operations are performed through Azure Functions.
+- SQL queries use parameterized inputs where applicable.
+- `NULL` bonuses are handled explicitly.
+- Employee IDs are generated using SQL Server `IDENTITY`.
+- Reporting calculations are performed dynamically from the database.
+- The API does not expose database credentials to clients.

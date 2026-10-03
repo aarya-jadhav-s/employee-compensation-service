@@ -14,6 +14,14 @@ def get_connection():
 
     return pyodbc.connect(connection_string)
 
+def error_response(message: str, status_code: int = 500) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps({
+            "error": message
+        }),
+        status_code=status_code,
+        mimetype="application/json"
+    )
 
 # PART A
 # 1. Create a new employee. The bonus is optional and may be left unset.
@@ -66,10 +74,22 @@ def create_employee(req: func.HttpRequest) -> func.HttpResponse:
             status_code=201
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error creating employee: {str(e)}",
-            status_code=500
+    except ValueError:
+        return error_response(
+            "Invalid request body. Please provide valid JSON.",
+            400
+        )
+
+    except pyodbc.IntegrityError:
+        return error_response(
+            "Invalid employee data. Please check the DepartmentID and other required fields.",
+            400
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while creating the employee.",
+            500
         )
         
         
@@ -91,6 +111,7 @@ def get_employee(req: func.HttpRequest) -> func.HttpResponse:
                 DepartmentID,
                 Salary,
                 Bonus,
+                COALESCE(Bonus, Salary * 0.05) AS EffectiveBonus,
                 HireDate
             FROM Employee
             WHERE EmployeeID = ?
@@ -116,6 +137,7 @@ def get_employee(req: func.HttpRequest) -> func.HttpResponse:
             "DepartmentID": row.DepartmentID,
             "Salary": float(row.Salary),
             "Bonus": float(row.Bonus) if row.Bonus is not None else None,
+            "EffectiveBonus": float(row.EffectiveBonus),
             "HireDate": str(row.HireDate) if row.HireDate is not None else None
         }
 
@@ -125,11 +147,24 @@ def get_employee(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error retrieving employee: {str(e)}",
-            status_code=500
+    except ValueError:
+        return error_response(
+            "Invalid employee ID.",
+            400
         )
+
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while retrieving the employee.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while retrieving the employee.",
+            500
+        )
+
         
 # 3. Retrieve a list of employees, with optional filtering by department.
 
@@ -151,6 +186,7 @@ def get_employees(req: func.HttpRequest) -> func.HttpResponse:
                     DepartmentID,
                     Salary,
                     Bonus,
+                    COALESCE(Bonus, Salary * 0.05) AS EffectiveBonus,
                     HireDate
                 FROM Employee
                 WHERE DepartmentID = ?
@@ -167,6 +203,7 @@ def get_employees(req: func.HttpRequest) -> func.HttpResponse:
                     DepartmentID,
                     Salary,
                     Bonus,
+                    COALESCE(Bonus, Salary * 0.05) AS EffectiveBonus,
                     HireDate
                 FROM Employee
                 """
@@ -184,6 +221,7 @@ def get_employees(req: func.HttpRequest) -> func.HttpResponse:
                 "DepartmentID": row.DepartmentID,
                 "Salary": float(row.Salary),
                 "Bonus": float(row.Bonus) if row.Bonus is not None else None,
+                "EffectiveBonus": float(row.EffectiveBonus),
                 "HireDate": str(row.HireDate) if row.HireDate is not None else None
             })
 
@@ -196,11 +234,24 @@ def get_employees(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error retrieving employees: {str(e)}",
-            status_code=500
+    except ValueError:
+        return error_response(
+            "Invalid department ID.",
+            400
         )
+
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while retrieving employees.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while retrieving employees.",
+            500
+        )
+    
         
 # 4. Update an existing employee (for example, changing their bonus).
 
@@ -265,10 +316,28 @@ def update_employee(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error updating employee: {str(e)}",
-            status_code=500
+    except ValueError:
+        return error_response(
+            "Invalid request body. Please provide valid JSON.",
+            400
+        )
+
+    except pyodbc.IntegrityError:
+        return error_response(
+            "Invalid employee data. Please check the DepartmentID and other required fields.",
+            400
+        )
+
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while updating the employee.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while updating the employee.",
+            500
         )
         
 # 5. Delete an employee.
@@ -307,10 +376,22 @@ def delete_employee(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error deleting employee: {str(e)}",
-            status_code=500
+    except ValueError:
+        return error_response(
+            "Invalid employee ID.",
+            400
+        )
+
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while deleting the employee.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while deleting the employee.",
+            500
         )
 
 # PART B
@@ -343,10 +424,16 @@ def get_total_bonus(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error calculating total bonus: {str(e)}",
-            status_code=500
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while calculating total bonus.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while calculating total bonus.",
+            500
         )
         
         
@@ -394,10 +481,16 @@ def get_employees_without_bonus(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error retrieving employees without bonus: {str(e)}",
-            status_code=500
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while retrieving employees without bonus.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while retrieving employees without bonus.",
+            500
         )
 
 # 3. For each employee who has a bonus, their bonus as a percentage of their salary, rounded to 2 decimal places.
@@ -448,10 +541,16 @@ def get_bonus_percentage(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error calculating bonus percentage: {str(e)}",
-            status_code=500
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while calculating bonus percentage.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while calculating bonus percentage.",
+            500
         )
 
 # 4. Departments where the total bonus paid exceeds the department's average salary.
@@ -500,11 +599,17 @@ def get_departments_bonus_above_average_salary(req: func.HttpRequest) -> func.Ht
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error retrieving departments: {str(e)}",
-            status_code=500
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while calculating department bonus comparison.",
+            500
         )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while calculating department bonus comparison.",
+            500
+        )   
 
 # 5. Employees ranked by bonus amount, with employees who have no bonus ranked last rather than excluded.
 
@@ -559,10 +664,16 @@ def get_bonus_ranking(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error ranking employees by bonus: {str(e)}",
-            status_code=500
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while calculating bonus ranking.",
+            500
+        )
+
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while calculating bonus ranking.",
+            500
         )
         
 # 6. The employee with the highest base salary, and — separately — whether that same person also has the highest total compensation (salary + bonus).
@@ -660,9 +771,14 @@ def get_highest_salary_employee(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    except Exception as e:
-        return func.HttpResponse(
-            f"Error retrieving salary and compensation information: {str(e)}",
-            status_code=500
+    except pyodbc.Error:
+        return error_response(
+            "A database error occurred while calculating highest salary and compensation.",
+            500
         )
 
+    except Exception:
+        return error_response(
+            "An unexpected error occurred while calculating highest salary and compensation.",
+            500
+        )
