@@ -14,6 +14,8 @@ def get_connection():
 
     return pyodbc.connect(connection_string)
 
+
+# PART A
 # 1. Create a new employee. The bonus is optional and may be left unset.
 
 @app.route(route="employees", methods=["POST"])
@@ -310,3 +312,357 @@ def delete_employee(req: func.HttpRequest) -> func.HttpResponse:
             f"Error deleting employee: {str(e)}",
             status_code=500
         )
+
+# PART B
+# 1. The total bonus paid across the whole company, treating employees with no bonus as 0.    
+@app.route(route="reports/total-bonus", methods=["GET"])
+def get_total_bonus(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(Bonus), 0) AS TotalBonus
+            FROM Employee
+            """
+        )
+
+        row = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        result = {
+            "TotalBonus": float(row.TotalBonus)
+        }
+
+        return func.HttpResponse(
+            json.dumps(result),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            f"Error calculating total bonus: {str(e)}",
+            status_code=500
+        )
+        
+        
+# 2. A list of all employees who have never received a bonus.
+@app.route(route="reports/no-bonus", methods=["GET"])
+def get_employees_without_bonus(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                EmployeeID,
+                FirstName,
+                LastName,
+                DepartmentID,
+                Salary,
+                HireDate
+            FROM Employee
+            WHERE Bonus IS NULL
+            """
+        )
+
+        rows = cursor.fetchall()
+
+        employees = []
+
+        for row in rows:
+            employees.append({
+                "EmployeeID": row.EmployeeID,
+                "FirstName": row.FirstName,
+                "LastName": row.LastName,
+                "DepartmentID": row.DepartmentID,
+                "Salary": float(row.Salary),
+                "HireDate": str(row.HireDate) if row.HireDate is not None else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return func.HttpResponse(
+            json.dumps(employees),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            f"Error retrieving employees without bonus: {str(e)}",
+            status_code=500
+        )
+
+# 3. For each employee who has a bonus, their bonus as a percentage of their salary, rounded to 2 decimal places.
+@app.route(route="reports/bonus-percentage", methods=["GET"])
+def get_bonus_percentage(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                EmployeeID,
+                FirstName,
+                LastName,
+                Salary,
+                Bonus,
+                ROUND(
+                    (CAST(COALESCE(Bonus, 0) AS DECIMAL(12,2))
+                    / NULLIF(CAST(Salary AS DECIMAL(12,2)), 0)) * 100,
+                    2
+                ) AS BonusPercentage
+            FROM Employee
+            """
+        )
+
+        rows = cursor.fetchall()
+
+        employees = []
+
+        for row in rows:
+            employees.append({
+                "EmployeeID": row.EmployeeID,
+                "FirstName": row.FirstName,
+                "LastName": row.LastName,
+                "Salary": float(row.Salary),
+                # "Bonus": float(row.Bonus),
+                "Bonus": float(row.Bonus) if row.Bonus is not None else 0,
+                "BonusPercentage": float(row.BonusPercentage)
+            })
+
+        cursor.close()
+        conn.close()
+
+        return func.HttpResponse(
+            json.dumps(employees),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            f"Error calculating bonus percentage: {str(e)}",
+            status_code=500
+        )
+
+# 4. Departments where the total bonus paid exceeds the department's average salary.
+
+@app.route(route="reports/departments-bonus-above-average-salary", methods=["GET"])
+def get_departments_bonus_above_average_salary(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                d.DepartmentID,
+                d.DepartmentName,
+                SUM(COALESCE(e.Bonus, 0)) AS TotalBonus,
+                AVG(e.Salary) AS AverageSalary
+            FROM Department d
+            INNER JOIN Employee e
+                ON d.DepartmentID = e.DepartmentID
+            GROUP BY
+                d.DepartmentID,
+                d.DepartmentName
+            HAVING SUM(COALESCE(e.Bonus, 0)) > AVG(e.Salary)
+            """
+        )
+
+        rows = cursor.fetchall()
+
+        departments = []
+
+        for row in rows:
+            departments.append({
+                "DepartmentID": row.DepartmentID,
+                "DepartmentName": row.DepartmentName,
+                "TotalBonus": float(row.TotalBonus),
+                "AverageSalary": float(row.AverageSalary)
+            })
+
+        cursor.close()
+        conn.close()
+
+        return func.HttpResponse(
+            json.dumps(departments),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            f"Error retrieving departments: {str(e)}",
+            status_code=500
+        )
+
+# 5. Employees ranked by bonus amount, with employees who have no bonus ranked last rather than excluded.
+
+@app.route(route="reports/bonus-ranking", methods=["GET"])
+def get_bonus_ranking(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                EmployeeID,
+                FirstName,
+                LastName,
+                DepartmentID,
+                Salary,
+                Bonus,
+                RANK() OVER (
+                    ORDER BY
+                        CASE WHEN Bonus IS NULL THEN 1 ELSE 0 END,
+                        Bonus DESC
+                ) AS BonusRank
+            FROM Employee
+            ORDER BY
+                CASE WHEN Bonus IS NULL THEN 1 ELSE 0 END,
+                Bonus DESC
+            """
+        )
+
+        rows = cursor.fetchall()
+
+        employees = []
+
+        for row in rows:
+            employees.append({
+                "Rank": row.BonusRank,
+                "EmployeeID": row.EmployeeID,
+                "FirstName": row.FirstName,
+                "LastName": row.LastName,
+                "DepartmentID": row.DepartmentID,
+                "Salary": float(row.Salary),
+                "Bonus": float(row.Bonus) if row.Bonus is not None else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return func.HttpResponse(
+            json.dumps(employees),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            f"Error ranking employees by bonus: {str(e)}",
+            status_code=500
+        )
+        
+# 6. The employee with the highest base salary, and — separately — whether that same person also has the highest total compensation (salary + bonus).
+      
+@app.route(route="reports/highest-salary", methods=["GET"])
+def get_highest_salary_employee(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            WITH EmployeeCompensation AS (
+                SELECT
+                    EmployeeID,
+                    FirstName,
+                    LastName,
+                    DepartmentID,
+                    Salary,
+                    Bonus,
+                    Salary + COALESCE(Bonus, 0) AS TotalCompensation
+                FROM Employee
+            ),
+            HighestSalary AS (
+                SELECT TOP 1 *
+                FROM EmployeeCompensation
+                ORDER BY Salary DESC
+            ),
+            HighestCompensation AS (
+                SELECT TOP 1 *
+                FROM EmployeeCompensation
+                ORDER BY TotalCompensation DESC
+            )
+            SELECT
+                hs.EmployeeID AS SalaryEmployeeID,
+                hs.FirstName AS SalaryFirstName,
+                hs.LastName AS SalaryLastName,
+                hs.DepartmentID AS SalaryDepartmentID,
+                hs.Salary AS HighestSalary,
+                hs.Bonus AS SalaryEmployeeBonus,
+                hs.TotalCompensation AS SalaryEmployeeTotalCompensation,
+
+                hc.EmployeeID AS CompensationEmployeeID,
+                hc.FirstName AS CompensationFirstName,
+                hc.LastName AS CompensationLastName,
+                hc.DepartmentID AS CompensationDepartmentID,
+                hc.Salary AS CompensationEmployeeSalary,
+                hc.Bonus AS HighestCompensationBonus,
+                hc.TotalCompensation AS HighestTotalCompensation
+            FROM HighestSalary hs
+            CROSS JOIN HighestCompensation hc
+            """
+        )
+
+        row = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if row is None:
+            return func.HttpResponse(
+                "No employees found.",
+                status_code=404
+            )
+
+        result = {
+            "HighestBaseSalaryEmployee": {
+                "EmployeeID": row.SalaryEmployeeID,
+                "FirstName": row.SalaryFirstName,
+                "LastName": row.SalaryLastName,
+                "DepartmentID": row.SalaryDepartmentID,
+                "Salary": float(row.HighestSalary),
+                "Bonus": float(row.SalaryEmployeeBonus)
+                if row.SalaryEmployeeBonus is not None else None,
+                "TotalCompensation": float(row.SalaryEmployeeTotalCompensation)
+            },
+            "HighestTotalCompensationEmployee": {
+                "EmployeeID": row.CompensationEmployeeID,
+                "FirstName": row.CompensationFirstName,
+                "LastName": row.CompensationLastName,
+                "DepartmentID": row.CompensationDepartmentID,
+                "Salary": float(row.CompensationEmployeeSalary),
+                "Bonus": float(row.HighestCompensationBonus)
+                if row.HighestCompensationBonus is not None else None,
+                "TotalCompensation": float(row.HighestTotalCompensation)
+            },
+            "SameEmployee": (
+                row.SalaryEmployeeID == row.CompensationEmployeeID
+            )
+        }
+
+        return func.HttpResponse(
+            json.dumps(result),
+            status_code=200,
+            mimetype="application/json"
+        )
+
+    except Exception as e:
+        return func.HttpResponse(
+            f"Error retrieving salary and compensation information: {str(e)}",
+            status_code=500
+        )
+
